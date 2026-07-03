@@ -1,0 +1,170 @@
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
+import type { Department, MonitoringHead, UserRole } from '../types';
+import { Building2, ShieldCheck, Eye, EyeOff, LogIn, Monitor } from 'lucide-react';
+
+export function Login() {
+  const { login } = useAuth();
+  const [role, setRole] = useState<UserRole>('department');
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [monitors, setMonitors] = useState<MonitoringHead[]>([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const [deptRes, monitorRes] = await Promise.all([
+        supabase.from('departments').select('*').order('sort_order'),
+        supabase.from('monitoring_heads').select('*').order('sort_order'),
+      ]);
+      if (deptRes.data) setDepartments(deptRes.data);
+      if (monitorRes.data) setMonitors(monitorRes.data);
+      if (deptRes.data?.[0]) setSelectedId(deptRes.data[0].id);
+    };
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    if (role === 'department' && departments[0]) {
+      setSelectedId(departments[0].id);
+    } else if (role === 'monitor' && monitors[0]) {
+      setSelectedId(monitors[0].id);
+    }
+  }, [role, departments, monitors]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    const success = await login(role, { id: role === 'admin' ? 'admin' : selectedId, password });
+    if (!success) {
+      setError('Invalid credentials. Please try again.');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-2xl mb-4 shadow-lg shadow-emerald-500/30">
+            <Building2 className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-3xl font-bold text-white mb-2">Performance Tracker</h1>
+          <p className="text-slate-400">Departmental Performance Management System</p>
+        </div>
+
+        <div className="bg-slate-800/50 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-6 shadow-2xl">
+          <div className="flex gap-2 mb-6 p-1 bg-slate-900/50 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setRole('department')}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-medium transition-all ${
+                role === 'department'
+                  ? 'bg-emerald-600 text-white shadow-lg'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <Building2 className="w-4 h-4" />
+              Department
+            </button>
+            <button
+              type="button"
+              onClick={() => setRole('monitor')}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-medium transition-all ${
+                role === 'monitor'
+                  ? 'bg-blue-600 text-white shadow-lg'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <Monitor className="w-4 h-4" />
+              Monitor
+            </button>
+            <button
+              type="button"
+              onClick={() => setRole('admin')}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-medium transition-all ${
+                role === 'admin'
+                  ? 'bg-amber-600 text-white shadow-lg'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              Admin
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {role !== 'admin' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Select {role === 'department' ? 'Department' : 'Monitoring Head'}
+                </label>
+                <select
+                  value={selectedId}
+                  onChange={(e) => setSelectedId(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                >
+                  {(role === 'department' ? departments : monitors).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">Password</label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all pr-12"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm text-center">
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg shadow-emerald-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  <LogIn className="w-5 h-5" />
+                  Sign In
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+
+        <p className="text-center text-slate-500 text-sm mt-6">
+          Departmental Performance Management System
+        </p>
+      </div>
+    </div>
+  );
+}

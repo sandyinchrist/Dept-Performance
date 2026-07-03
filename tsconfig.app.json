@@ -1,0 +1,123 @@
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+import type { Department, MonitoringHead } from '../types';
+import { Building2, Monitor, ChevronRight, TrendingUp, ClipboardCheck, FileText, Settings } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+
+interface AdminDashboardProps {
+  onNavigate: (page: string) => void;
+}
+
+export function AdminDashboard({ onNavigate }: AdminDashboardProps) {
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [monitors, setMonitors] = useState<MonitoringHead[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const [deptRes, monRes] = await Promise.all([
+        supabase.from('departments').select('*').order('sort_order'),
+        supabase.from('monitoring_heads').select('*').order('sort_order'),
+      ]);
+      if (deptRes.data) setDepartments(deptRes.data);
+      if (monRes.data) setMonitors(monRes.data);
+      setLoading(false);
+    };
+    fetchData();
+  }, []);
+
+  const quickLinks = [
+    { id: 'departments', label: 'View All Departments', icon: Building2, color: 'emerald' },
+    { id: 'master1', label: 'Master 1 Report', icon: FileText, color: 'blue' },
+    { id: 'executive-report', label: 'Executive Report', icon: TrendingUp, color: 'teal' },
+    { id: 'compliance-overview', label: 'Compliance Overview', icon: ClipboardCheck, color: 'amber' },
+    { id: 'settings', label: 'Admin Settings', icon: Settings, color: 'slate' },
+  ];
+
+  if (loading) {
+    return <div className="flex items-center justify-center h-64">Loading...</div>;
+  }
+
+  return (
+    <div className="p-6">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-white">Administrator Dashboard</h1>
+        <p className="text-slate-400 mt-1">Manage and monitor all departments and compliance</p>
+      </div>
+
+      <div className="grid grid-cols-4 gap-4 mb-8">
+        <div className="p-6 bg-gradient-to-br from-emerald-600/20 to-emerald-800/20 border border-emerald-500/30 rounded-2xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-emerald-400 text-sm">Total Departments</p>
+              <p className="text-4xl font-bold text-white mt-1">{departments.length}</p>
+            </div>
+            <Building2 className="w-10 h-10 text-emerald-500/50" />
+          </div>
+        </div>
+        <div className="p-6 bg-gradient-to-br from-blue-600/20 to-blue-800/20 border border-blue-500/30 rounded-2xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-blue-400 text-sm">Monitoring Heads</p>
+              <p className="text-4xl font-bold text-white mt-1">{monitors.length}</p>
+            </div>
+            <Monitor className="w-10 h-10 text-blue-500/50" />
+          </div>
+        </div>
+        <div className="p-6 bg-gradient-to-br from-teal-600/20 to-teal-800/20 border border-teal-500/30 rounded-2xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-teal-400 text-sm">Focus Areas</p>
+              <p className="text-4xl font-bold text-white mt-1">{25}</p>
+            </div>
+            <FileText className="w-10 h-10 text-teal-500/50" />
+          </div>
+        </div>
+        <div className="p-6 bg-gradient-to-br from-amber-600/20 to-amber-800/20 border border-amber-500/30 rounded-2xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-amber-400 text-sm">Master Reports</p>
+              <p className="text-4xl font-bold text-white mt-1">1</p>
+            </div>
+            <TrendingUp className="w-10 h-10 text-amber-500/50" />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-6">
+        <div className="bg-slate-800/30 border border-slate-700/50 rounded-2xl p-6">
+          <h2 className="text-xl font-bold text-white mb-4">Quick Actions</h2>
+          <div className="space-y-2">
+            {quickLinks.map((link) => (
+              <button
+                key={link.id}
+                onClick={() => onNavigate(link.id)}
+                className="w-full flex items-center justify-between p-4 bg-slate-700/30 hover:bg-slate-700/50 rounded-xl transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <link.icon className={`w-5 h-5 text-${link.color}-400`} />
+                  <span className="text-white font-medium">{link.label}</span>
+                </div>
+                <ChevronRight className="w-5 h-5 text-slate-500 group-hover:text-white transition-colors" />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-slate-800/30 border border-slate-700/50 rounded-2xl p-6">
+          <h2 className="text-xl font-bold text-white mb-4">Departments Overview</h2>
+          <div className="grid grid-cols-2 gap-2 max-h-80 overflow-y-auto">
+            {departments.map((dept, idx) => (
+              <div key={dept.id} className="p-3 bg-slate-700/30 rounded-xl">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 text-sm">{idx + 1}.</span>
+                  <span className="text-white text-sm font-medium">{dept.name}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

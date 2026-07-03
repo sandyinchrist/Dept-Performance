@@ -1,0 +1,357 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../lib/supabase';
+import type { Department, FocusArea, MonthlyRecord } from '../types';
+import { MONTHS, CURRENT_YEAR } from '../types';
+import { RefreshCw, Printer, Download } from 'lucide-react';
+
+interface FocusAreaRow {
+  name: string;
+  sort_order: number;
+  records: Map<string, MonthlyRecord>; // department_id -> record
+}
+
+export function Master1Report() {
+  const [year, setYear] = useState(CURRENT_YEAR);
+  const [month, setMonth] = useState(new Date().getMonth());
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [focusAreaRows, setFocusAreaRows] = useState<FocusAreaRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Get first 6 departments
+      const deptRes = await supabase
+        .from('departments')
+        .select('*')
+        .order('sort_order')
+        .limit(6);
+
+      if (!deptRes.data || deptRes.data.length === 0) {
+        setLoading(false);
+        return;
+      }
+      setDepartments(deptRes.data);
+      const deptIds = deptRes.data.map(d => d.id);
+
+      // Get focus areas for these departments - ordered by sort_order
+      const faRes = await supabase
+        .from('focus_areas')
+        .select('*')
+        .in('department_id', deptIds)
+        .eq('is_active', true)
+        .order('sort_order');
+
+      // Get monthly records
+      const recRes = await supabase
+        .from('monthly_records')
+        .select('*')
+        .in('department_id', deptIds)
+        .eq('year', year)
+        .eq('month', month + 1);
+
+      if (!faRes.data || !recRes.data) {
+        setLoading(false);
+        return;
+      }
+
+      // Build aligned focus area rows
+      // Use the first department's focus areas as the template
+      const firstDeptId = deptIds[0];
+      const firstDeptFocusAreas = faRes.data
+        .filter(fa => fa.department_id === firstDeptId)
+        .sort((a, b) => a.sort_order - b.sort_order);
+
+      const rows: FocusAreaRow[] = firstDeptFocusAreas.map(fa => ({
+        name: fa.name,
+        sort_order: fa.sort_order,
+        records: new Map(),
+      }));
+
+      // Fill in records for each department
+      deptIds.forEach((deptId, deptIndex) => {
+        const deptFocusAreas = faRes.data!.filter(fa => fa.department_id === deptId);
+
+        // Match by sort_order position (same position = same row)
+        deptFocusAreas.forEach(fa => {
+          const rowIndex = fa.sort_order - 1;
+          if (rowIndex >= 0 && rowIndex < rows.length) {
+            const record = recRes.data!.find(r =>
+              r.department_id === deptId && r.focus_area_id === fa.id
+            );
+            if (record) {
+              rows[rowIndex].records.set(deptId, record);
+            }
+          }
+        });
+      });
+
+      setFocusAreaRows(rows);
+    } catch (err) {
+      console.error('Error fetching Master 1 data:', err);
+    }
+    setLoading(false);
+  }, [year, month]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const getTotals = () => {
+    let totalMonthly = 0;
+    let totalAnnual = 0;
+    let totalAnnualTarget = 0;
+    let totalMonthlyTarget = 0;
+
+    focusAreaRows.forEach(row => {
+      departments.forEach(dept => {
+        const rec = row.records.get(dept.id);
+        if (rec) {
+          totalMonthly += rec.monthly_achievement || 0;
+          totalAnnual += rec.annual_total || 0;
+          totalAnnualTarget += rec.annual_target || 0;
+          totalMonthlyTarget += rec.monthly_target || 0;
+        }
+      });
+    });
+
+    return { totalMonthly, totalAnnual, totalAnnualTarget, totalMonthlyTarget };
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleExport = () => {
+    const csvRows = [
+      ['S/N', 'Focus Area', ...departments.map(d => d.name + ' Monthly'), ...departments.map(d => d.name + ' Annual'), 'Total Monthly', 'Total Annual', 'Annual %'],
+      ...focusAreaRows.map((row, idx) => {
+        const monthlyValues = departments.map(d => row.records.get(d.id)?.monthly_achievement || 0);
+        const annualValues = departments.map(d => row.records.get(d.id)?.annual_total || 0);
+        const totalMonthly = monthlyValues.reduce((a, b) => a + b, 0);
+        const totalAnnual = annualValues.reduce((a, b) => a + b, 0);
+        const totalTarget = departments.reduce((sum, d) => sum + (row.records.get(d.id)?.annual_target || 0), 0);
+        const annualPercent = totalTarget > 0 ? ((totalAnnual / totalTarget) * 100).toFixed(1) : '0.0';
+        return [String(idx + 1), row.name, ...monthlyValues.map(v => v.toFixed(2)), ...annualValues.map(v => v.toFixed(2)), totalMonthly.toFixed(2), totalAnnual.toFixed(2), annualPercent + '%'];
+      }),
+    ];
+
+    const csvContent = csvRows.map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Master1_${MONTHS[month]}_${year}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin" />
+      </div>
+    );
+  }
+
+  const totals = getTotals();
+  const overallAnnualPercent = totals.totalAnnualTarget > 0
+    ? (totals.totalAnnual / totals.totalAnnualTarget) * 100
+    : 0;
+  const overallMonthlyPercent = totals.totalMonthlyTarget > 0
+    ? (totals.totalMonthly / totals.totalMonthlyTarget) * 100
+    : 0;
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Master 1 Report</h1>
+          <p className="text-slate-400">Consolidation of Departments 1-6</p>
+        </div>
+        <div className="flex items-center gap-4">
+          <select
+            value={year}
+            onChange={(e) => setYear(parseInt(e.target.value))}
+            className="px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-xl text-white"
+          >
+            {[CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1].map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+          <select
+            value={month}
+            onChange={(e) => setMonth(parseInt(e.target.value))}
+            className="px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-xl text-white"
+          >
+            {MONTHS.map((m, i) => (
+              <option key={i} value={i}>{m}</option>
+            ))}
+          </select>
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export
+          </button>
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-colors"
+          >
+            <Printer className="w-4 h-4" />
+            Print
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl overflow-hidden print:bg-white print:text-black">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-800/50 print:bg-gray-200">
+                <th className="px-3 py-3 text-left text-slate-300 print:text-black font-medium border-r border-slate-700 print:border-gray-400 sticky left-0 bg-slate-800/50 print:bg-gray-200 z-10 min-w-[40px]">
+                  S/N
+                </th>
+                <th className="px-3 py-3 text-left text-slate-300 print:text-black font-medium border-r border-slate-700 print:border-gray-400 sticky left-[40px] bg-slate-800/50 print:bg-gray-200 z-10 min-w-[200px]">
+                  Focus Area
+                </th>
+                {departments.map((dept, idx) => (
+                  <th key={dept.id} colSpan={2} className="px-3 py-3 text-center text-slate-300 print:text-black font-medium border-r border-slate-700 print:border-gray-400 min-w-[140px]">
+                    Dept {idx + 1}
+                    <div className="text-xs text-slate-500 font-normal">{dept.name}</div>
+                  </th>
+                ))}
+                <th className="px-3 py-3 text-center text-emerald-400 font-medium border-r border-slate-700 print:border-gray-400 min-w-[80px]">
+                  Total Monthly
+                </th>
+                <th className="px-3 py-3 text-center text-blue-400 font-medium border-r border-slate-700 print:border-gray-400 min-w-[80px]">
+                  Total Annual
+                </th>
+                <th className="px-3 py-3 text-center text-blue-400 font-medium min-w-[80px]">
+                  Annual %
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {focusAreaRows.map((row, idx) => {
+                // Calculate row totals
+                let rowMonthlyTotal = 0;
+                let rowAnnualTotal = 0;
+                let rowAnnualTarget = 0;
+
+                departments.forEach(dept => {
+                  const rec = row.records.get(dept.id);
+                  if (rec) {
+                    rowMonthlyTotal += rec.monthly_achievement || 0;
+                    rowAnnualTotal += rec.annual_total || 0;
+                    rowAnnualTarget += rec.annual_target || 0;
+                  }
+                });
+
+                const rowAnnualPercent = rowAnnualTarget > 0
+                  ? (rowAnnualTotal / rowAnnualTarget) * 100
+                  : 0;
+
+                return (
+                  <tr key={idx} className="border-t border-slate-700/50 print:border-gray-300 hover:bg-slate-700/20 print:hover:bg-transparent">
+                    <td className="px-3 py-2 text-slate-400 print:text-gray-600 border-r border-slate-700/50 print:border-gray-400 sticky left-0 bg-slate-800/30 print:bg-white">
+                      {idx + 1}
+                    </td>
+                    <td className="px-3 py-2 text-white print:text-black border-r border-slate-700/50 print:border-gray-400 sticky left-[40px] bg-slate-800/30 print:bg-white z-10">
+                      {row.name}
+                    </td>
+                    {departments.map(dept => {
+                      const rec = row.records.get(dept.id);
+                      return (
+                        <React.Fragment key={dept.id}>
+                          <td className="px-2 py-2 text-right border-r border-slate-500/30 print:border-gray-300">
+                            <span className="text-emerald-400">{rec?.monthly_achievement?.toFixed(2) || '0.00'}</span>
+                          </td>
+                          <td className="px-2 py-2 text-right border-r border-slate-700/50 print:border-gray-400">
+                            <span className="text-blue-400 text-xs">({rec?.annual_total?.toFixed(2) || '0.00'})</span>
+                          </td>
+                        </React.Fragment>
+                      );
+                    })}
+                    <td className="px-3 py-2 text-right font-medium text-emerald-400 border-r border-slate-700/50 print:border-gray-400">
+                      {rowMonthlyTotal.toFixed(2)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium text-blue-400 border-r border-slate-700/50 print:border-gray-400">
+                      {rowAnnualTotal.toFixed(2)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium text-blue-400">
+                      {rowAnnualPercent.toFixed(1)}%
+                    </td>
+                  </tr>
+                );
+              })}
+              {/* Totals Row */}
+              <tr className="bg-slate-800/70 print:bg-gray-200 font-bold">
+                <td className="px-3 py-3 text-white print:text-black border-r border-slate-700 print:border-gray-400 sticky left-0 bg-slate-800/70 print:bg-gray-200">
+                  TOTAL
+                </td>
+                <td className="px-3 py-3 text-white print:text-black border-r border-slate-700 print:border-gray-400 sticky left-[40px] bg-slate-800/70 print:bg-gray-200 z-10">
+                  All Focus Areas
+                </td>
+                {departments.map(dept => {
+                  let deptMonthly = 0;
+                  let deptAnnual = 0;
+                  focusAreaRows.forEach(row => {
+                    const rec = row.records.get(dept.id);
+                    deptMonthly += rec?.monthly_achievement || 0;
+                    deptAnnual += rec?.annual_total || 0;
+                  });
+                  return (
+                    <React.Fragment key={dept.id}>
+                      <td className="px-3 py-3 text-right text-emerald-400 border-r border-slate-500/30 print:border-gray-400">
+                        {deptMonthly.toFixed(2)}
+                      </td>
+                      <td className="px-3 py-3 text-right text-blue-400 border-r border-slate-700 print:border-gray-400">
+                        ({deptAnnual.toFixed(2)})
+                      </td>
+                    </React.Fragment>
+                  );
+                })}
+                <td className="px-3 py-3 text-right text-emerald-400 border-r border-slate-700 print:border-gray-400">
+                  {totals.totalMonthly.toFixed(2)}
+                </td>
+                <td className="px-3 py-3 text-right text-blue-400 border-r border-slate-700 print:border-gray-400">
+                  {totals.totalAnnual.toFixed(2)}
+                </td>
+                <td className="px-3 py-3 text-right text-blue-400">
+                  {overallAnnualPercent.toFixed(1)}%
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Executive Summary */}
+      <div className="mt-6 p-6 bg-slate-800/30 border border-slate-700/50 rounded-xl print:bg-white print:border-gray-400">
+        <h2 className="text-xl font-bold text-white print:text-black mb-4">Executive Summary - Master 1</h2>
+        <div className="grid grid-cols-2 gap-6">
+          <div className="p-4 bg-slate-700/30 print:bg-gray-100 rounded-xl">
+            <p className="text-slate-400 print:text-gray-600 text-sm">Overall Monthly Achievement</p>
+            <p className="text-3xl font-bold text-emerald-400 print:text-emerald-600 mt-1">
+              {overallMonthlyPercent.toFixed(1)}%
+            </p>
+            <p className="text-slate-500 text-sm mt-1">
+              {totals.totalMonthly.toFixed(0)} of {totals.totalMonthlyTarget.toFixed(0)}
+            </p>
+          </div>
+          <div className="p-4 bg-slate-700/30 print:bg-gray-100 rounded-xl">
+            <p className="text-slate-400 print:text-gray-600 text-sm">Cumulative Annual Achievement</p>
+            <p className="text-3xl font-bold text-blue-400 print:text-blue-600 mt-1">
+              {overallAnnualPercent.toFixed(1)}%
+            </p>
+            <p className="text-slate-500 text-sm mt-1">
+              {totals.totalAnnual.toFixed(0)} of {totals.totalAnnualTarget.toFixed(0)}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
